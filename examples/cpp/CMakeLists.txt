@@ -1,0 +1,2 @@
+add_executable(amfls_dense_example dense_example.cpp)
+target_link_libraries(amfls_dense_example PRIVATE amfls_core)

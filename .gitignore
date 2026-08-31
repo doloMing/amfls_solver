@@ -1,0 +1,14 @@
+/build*/
+/.cache/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.so
+*.dylib
+*.dll
+/docs/
+/paper/
+/experiments/
+/README.md
+/tests/python/test_experiment_protocol.py
+/tests/python/test_sparse_rank_audit.py
