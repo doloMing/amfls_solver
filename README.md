@@ -10,7 +10,7 @@ $b\in\mathbb{R}^m$, and a regularization parameter $\lambda\geq 0$, AMFLS
 computes
 
 $$
-x_\lambda=\underset{x\in\operatorname{range}(A^*)}{\arg\min}\;
+x_\lambda=\underset{x\in\mathrm{range}(A^*)}{\arg\min}\;
 \|Ax-b\|_2^2+\lambda\|x\|_2^2.
 $$
 
@@ -812,9 +812,9 @@ y=\underset{y}{\arg\min}\;
 $$
 
 Therefore $x$ minimizes the original objective over the current space
-$\operatorname{range}(V)$. These spaces are nested, so the energy error
+$\mathrm{range}(V)$. These spaces are nested, so the energy error
 decreases as AMFLS completes more levels. For ordinary least squares,
-$\operatorname{range}(V)\subseteq\operatorname{range}(A^*)$, which gives the
+$\mathrm{range}(V)\subseteq\mathrm{range}(A^*)$, which gives the
 minimum-norm solution when stationarity is reached.
 
 ### 7.2 Random block expansion
