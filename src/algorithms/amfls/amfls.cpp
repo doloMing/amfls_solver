@@ -153,6 +153,15 @@ LeastSquaresResult solve_amfls(
         return final_result;
     };
 
+    const auto finish_at_limit = [&](SolverStatus status, StopReason reason) {
+        LeastSquaresResult final_result = options.regularization > 0.0
+            ? result
+            : best_result;
+        final_result.status = status;
+        final_result.stop_reason = reason;
+        return finish(std::move(final_result));
+    };
+
     // The unique AMFLS process begins at width one.  Initialization performs
     // no operator work; the first level is completed before the first and only
     // evaluation of the depth-one checkpoint.
@@ -230,24 +239,21 @@ LeastSquaresResult solve_amfls(
         // Begin at the preceding checkpoint boundary.  Terminal checks are
         // included whenever this iteration proceeds to another checkpoint.
         if (search_broke_numerically) {
-            best_result.status = SolverStatus::numerical_breakdown;
-            best_result.stop_reason = StopReason::numerical_breakdown;
-            return finish(best_result);
+            return finish_at_limit(
+                SolverStatus::numerical_breakdown,
+                StopReason::numerical_breakdown);
         }
         if (workspace.basis_rank() >= workspace.basis_limit()) {
-            best_result.status = SolverStatus::basis_limit;
-            best_result.stop_reason = StopReason::maximum_basis;
-            return finish(best_result);
+            return finish_at_limit(
+                SolverStatus::basis_limit, StopReason::maximum_basis);
         }
         if (workspace.depth() >= maximum_depth) {
-            best_result.status = SolverStatus::work_limit;
-            best_result.stop_reason = StopReason::maximum_depth;
-            return finish(best_result);
+            return finish_at_limit(
+                SolverStatus::work_limit, StopReason::maximum_depth);
         }
         if (continuation_truncated_numerically) {
-            best_result.status = SolverStatus::precision_limit;
-            best_result.stop_reason = StopReason::precision_limit;
-            return finish(best_result);
+            return finish_at_limit(
+                SolverStatus::precision_limit, StopReason::precision_limit);
         }
 
         // The interval begins at the preceding evaluated candidate so that
@@ -410,21 +416,31 @@ LeastSquaresResult solve_amfls(
                         workspace.basis_limit(),
                         requested_matched_horizon,
                         widening_stage_origin_width,
-                        widening_stage_target_width);
+                        widening_stage_target_width,
+                        controller_interval_certificate);
                 } else {
                     detail::reset_matched_horizon_costs(
                         width_plan, widening_stage_target_width);
                 }
-                evaluate_checkpoint(false);
                 continuation_truncated_numerically =
                     math::step_has_numerical_rank_truncation(
                         workspace.last_step_audit());
                 search_broke_numerically =
                     math::step_has_nonfinite_breakdown(
                         workspace.last_step_audit());
-                if (math::candidate_validation_failed_numerically(result) ||
-                    result.status == SolverStatus::success) {
-                    return finish(result);
+                const bool exhausted_trial_horizon =
+                    detail::remaining_matched_horizon(
+                        width_plan, workspace.basis_rank()) == 0;
+                const bool trial_is_terminal =
+                    workspace.basis_rank() >= workspace.basis_limit() ||
+                    workspace.depth() >= maximum_depth ||
+                    !workspace.can_advance();
+                if (trial_is_terminal || exhausted_trial_horizon) {
+                    evaluate_checkpoint(false);
+                    if (math::candidate_validation_failed_numerically(result) ||
+                        result.status == SolverStatus::success) {
+                        return finish(result);
+                    }
                 }
                 const bool reliable_trial =
                     !continuation_truncated_numerically &&
@@ -433,9 +449,17 @@ LeastSquaresResult solve_amfls(
                         widening_stage_start_basis_rank &&
                     workspace.active_left_width() ==
                         widening_stage_target_width;
+                const bool extended_trial_horizon = exhausted_trial_horizon &&
+                    detail::matched_horizon_progress_stalled(
+                        width_plan,
+                        active_certificate(result, options.regularization)) &&
+                    detail::extend_matched_horizon_to_basis_limit(
+                        width_plan,
+                        workspace.basis_rank(),
+                        workspace.basis_limit());
                 if (!reliable_trial ||
-                    detail::remaining_matched_horizon(
-                        width_plan, workspace.basis_rank()) == 0) {
+                    (exhausted_trial_horizon &&
+                     !extended_trial_horizon)) {
                     detail::reset_matched_horizon_plan(width_plan);
                     feedback_pending = false;
                 } else {
@@ -505,13 +529,27 @@ LeastSquaresResult solve_amfls(
                 interval_search_seconds - interval_operator_seconds);
 
             if (workspace.depth() > starting_depth) {
-                evaluate_checkpoint(
-                    !feedback_pending && !matched_cost_interval);
-                const double current_certificate =
-                    active_certificate(result, options.regularization);
-                if (math::candidate_validation_failed_numerically(result) ||
-                    result.status == SolverStatus::success) {
-                    return finish(result);
+                const bool completes_cost_pair = matched_cost_interval &&
+                    width_plan.cost_sample_count == 1;
+                const bool exhausts_matched_horizon =
+                    (feedback_pending || matched_cost_interval) &&
+                    detail::remaining_matched_horizon(
+                        width_plan, workspace.basis_rank()) == 0;
+                const bool interval_is_terminal =
+                    workspace.basis_rank() >= workspace.basis_limit() ||
+                    workspace.depth() >= maximum_depth ||
+                    !workspace.can_advance();
+                const bool evaluate_interval =
+                    (!feedback_pending && !matched_cost_interval) ||
+                    completes_cost_pair || exhausts_matched_horizon ||
+                    interval_is_terminal;
+                if (evaluate_interval) {
+                    evaluate_checkpoint(
+                        !feedback_pending && !matched_cost_interval);
+                    if (math::candidate_validation_failed_numerically(result) ||
+                        result.status == SolverStatus::success) {
+                        return finish(result);
+                    }
                 }
                 if (feedback_pending &&
                     workspace.depth() >= feedback_checkpoint_target_depth) {
@@ -534,9 +572,22 @@ LeastSquaresResult solve_amfls(
                             workspace.depth() - starting_depth,
                             interval_operator_seconds,
                             interval_local_seconds);
-                    if (!recorded ||
+                    const bool exhausted_feedback_horizon =
                         detail::remaining_matched_horizon(
-                            width_plan, workspace.basis_rank()) == 0) {
+                            width_plan, workspace.basis_rank()) == 0;
+                    const bool extended_feedback_horizon =
+                        exhausted_feedback_horizon &&
+                        detail::matched_horizon_progress_stalled(
+                            width_plan,
+                            active_certificate(
+                                result, options.regularization)) &&
+                        detail::extend_matched_horizon_to_basis_limit(
+                            width_plan,
+                            workspace.basis_rank(),
+                            workspace.basis_limit());
+                    if (!recorded ||
+                        (exhausted_feedback_horizon &&
+                         !extended_feedback_horizon)) {
                         detail::reset_matched_horizon_plan(width_plan);
                     }
                 } else if (matched_cost_interval) {
@@ -554,12 +605,27 @@ LeastSquaresResult solve_amfls(
                             workspace.depth() - starting_depth,
                             interval_operator_seconds,
                             interval_local_seconds);
-                    if (!recorded ||
+                    const bool exhausted_cost_horizon =
                         detail::remaining_matched_horizon(
-                            width_plan, workspace.basis_rank()) == 0) {
+                            width_plan, workspace.basis_rank()) == 0;
+                    const bool extended_cost_horizon =
+                        exhausted_cost_horizon &&
+                        detail::matched_horizon_progress_stalled(
+                            width_plan,
+                            active_certificate(
+                                result, options.regularization)) &&
+                        detail::extend_matched_horizon_to_basis_limit(
+                            width_plan,
+                            workspace.basis_rank(),
+                            workspace.basis_limit());
+                    if (!recorded ||
+                        (exhausted_cost_horizon &&
+                         !extended_cost_horizon)) {
                         detail::reset_matched_horizon_plan(width_plan);
                     }
                 } else if (!feedback_pending) {
+                    const double current_certificate =
+                        active_certificate(result, options.regularization);
                     detail::record_deepen_progress(
                         deepen_history,
                         controller_interval_certificate,
@@ -590,9 +656,7 @@ LeastSquaresResult solve_amfls(
             available_basis_increment > 0) {
             terminal_reason = StopReason::maximum_epochs;
         }
-        best_result.status = SolverStatus::work_limit;
-        best_result.stop_reason = terminal_reason;
-        return finish(best_result);
+        return finish_at_limit(SolverStatus::work_limit, terminal_reason);
     }
 }
 

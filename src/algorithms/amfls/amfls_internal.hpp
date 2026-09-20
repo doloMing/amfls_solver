@@ -221,7 +221,9 @@ struct WidthDecision {
         std::numeric_limits<double>::infinity();
     bool history_mature = false;
     bool prior_history_mature = false;
+    bool recent_slowdown = false;
     bool persistent_slowdown = false;
+    bool progress_stalled = false;
     bool long_horizon_pressure = false;
     bool widening_necessary = false;
     bool observed_costs_mature = false;
@@ -323,9 +325,10 @@ inline void apply_width_cost_gate(
 }
 
 // Compare two widths over one already approved finite right-rank horizon.
-// The horizon is never enlarged here.  Operator time follows the MatrixOperator
-// batching model, local block algebra is conservatively scaled quadratically,
-// and every proposed injection is charged one additional target local level.
+// The comparison uses the largest prefix that both widths can complete within
+// the remaining resources.  Operator time follows the MatrixOperator batching
+// model, local block algebra is scaled quadratically, and every proposed
+// injection is charged one additional target local level.
 inline WidthDecision make_horizon_width_candidate(
     int proposed_stage_increment,
     int remaining_horizon,
@@ -356,16 +359,19 @@ inline WidthDecision make_horizon_width_candidate(
 
     const int target_width =
         active_left_width + proposed_stage_increment;
-    decision.matched_horizon = remaining_horizon;
-    decision.incumbent_levels = ceiling_ratio(
-        remaining_horizon, active_left_width);
-    decision.target_levels = ceiling_ratio(
-        remaining_horizon, target_width);
     decision.target_remaining_levels = std::min(
         maximum_depth - current_depth,
         (basis_limit - current_basis_rank) / target_width);
-    if (decision.target_levels < 2 ||
-        decision.target_levels > decision.target_remaining_levels) {
+    const long long target_capacity =
+        static_cast<long long>(decision.target_remaining_levels) *
+        static_cast<long long>(target_width);
+    decision.matched_horizon = static_cast<int>(std::min(
+        static_cast<long long>(remaining_horizon), target_capacity));
+    decision.incumbent_levels = ceiling_ratio(
+        decision.matched_horizon, active_left_width);
+    decision.target_levels = ceiling_ratio(
+        decision.matched_horizon, target_width);
+    if (decision.target_levels < 2) {
         return decision;
     }
     decision.width_depth_admissible =
@@ -385,10 +391,11 @@ inline WidthDecision make_horizon_width_candidate(
     return decision;
 }
 
-// Open a finite matched-horizon plan only when widening is necessary: either
-// both recent intervals have slowed relative to earlier same-width progress,
-// or the scalar forecast is longer than the next width can execute with the
-// remaining resources.  The subsequent cost comparison remains strict.
+// Open a finite matched-horizon plan when the same-width history is mature
+// and the strict cost comparison predicts that the next width will finish the
+// matched work sooner.  Slowdown and resource pressure remain diagnostics for
+// why a wider block may help, but a long computation with steady progress can
+// also widen when its measured cost supports that decision.
 inline WidthDecision make_initial_width_candidate(
     int proposed_stage_increment,
     double current_certificate,
@@ -423,31 +430,37 @@ inline WidthDecision make_initial_width_candidate(
     const long double recent_progress =
         static_cast<long double>(history.same_width_log_contractions[0]) +
         static_cast<long double>(history.same_width_log_contractions[1]);
-    if (recent_levels <= 0 || !(recent_progress > 0.0L) ||
+    if (recent_levels <= 0 || !(recent_progress >= 0.0L) ||
         !std::isfinite(recent_progress)) {
         return decision;
     }
-    decision.recent_level_log_contraction = static_cast<double>(
-        recent_progress / static_cast<long double>(recent_levels));
+    decision.progress_stalled = recent_progress == 0.0L;
+    decision.recent_level_log_contraction = decision.progress_stalled
+        ? 0.0
+        : static_cast<double>(
+              recent_progress / static_cast<long double>(recent_levels));
     decision.remaining_log_contraction =
         std::log(current_certificate) - std::log(tolerance);
-    if (!(decision.recent_level_log_contraction > 0.0) ||
-        !std::isfinite(decision.recent_level_log_contraction) ||
+    if ((!decision.progress_stalled &&
+         (!(decision.recent_level_log_contraction > 0.0) ||
+          !std::isfinite(decision.recent_level_log_contraction))) ||
         !(decision.remaining_log_contraction > 0.0) ||
         !std::isfinite(decision.remaining_log_contraction)) {
         return decision;
     }
 
-    const long double raw_forecast =
-        static_cast<long double>(decision.remaining_log_contraction) /
-        static_cast<long double>(decision.recent_level_log_contraction);
-    if (!(raw_forecast > 0.0L) || !std::isfinite(raw_forecast)) {
-        return decision;
+    if (!decision.progress_stalled) {
+        const long double raw_forecast =
+            static_cast<long double>(decision.remaining_log_contraction) /
+            static_cast<long double>(decision.recent_level_log_contraction);
+        if (!(raw_forecast > 0.0L) || !std::isfinite(raw_forecast)) {
+            return decision;
+        }
+        decision.forecast_levels = raw_forecast >=
+                static_cast<long double>(std::numeric_limits<int>::max())
+            ? std::numeric_limits<int>::max()
+            : std::max(1, static_cast<int>(std::ceil(raw_forecast)));
     }
-    decision.forecast_levels = raw_forecast >=
-            static_cast<long double>(std::numeric_limits<int>::max())
-        ? std::numeric_limits<int>::max()
-        : std::max(1, static_cast<int>(std::ceil(raw_forecast)));
 
     decision.prior_history_mature =
         history.prior_same_width_levels > 0 &&
@@ -467,10 +480,15 @@ inline WidthDecision make_initial_width_candidate(
                 decision.prior_level_log_contraction;
     }
 
-    const long long raw_horizon =
-        static_cast<long long>(active_left_width) *
-        static_cast<long long>(decision.forecast_levels);
     const int remaining_basis = basis_limit - current_basis_rank;
+    const int target_width = active_left_width + proposed_stage_increment;
+    const int target_remaining_levels = std::min(
+        maximum_depth - current_depth,
+        remaining_basis / target_width);
+    const long long raw_horizon = decision.progress_stalled
+        ? static_cast<long long>(target_width) * target_remaining_levels
+        : static_cast<long long>(active_left_width) *
+              decision.forecast_levels;
     const int matched_horizon = static_cast<int>(std::min(
         raw_horizon, static_cast<long long>(remaining_basis)));
 
@@ -494,6 +512,7 @@ inline WidthDecision make_initial_width_candidate(
         decision.prior_history_mature;
     cost_decision.persistent_slowdown =
         decision.persistent_slowdown;
+    cost_decision.progress_stalled = decision.progress_stalled;
     cost_decision.recent_level_log_contraction =
         decision.recent_level_log_contraction;
     cost_decision.prior_level_log_contraction =
@@ -503,16 +522,30 @@ inline WidthDecision make_initial_width_candidate(
     cost_decision.forecast_levels = decision.forecast_levels;
     cost_decision.long_horizon_pressure =
         cost_decision.target_remaining_levels > 0 &&
-        decision.forecast_levels >
-            cost_decision.target_remaining_levels;
+        (cost_decision.progress_stalled ||
+         decision.forecast_levels >
+             cost_decision.target_remaining_levels);
     const bool positive_recent_progress =
         history.same_width_level_log_contractions[0] > 0.0 &&
         history.same_width_level_log_contractions[1] > 0.0;
-    cost_decision.widening_necessary =
-        cost_decision.prior_history_mature &&
+    cost_decision.recent_slowdown = positive_recent_progress &&
+        history.same_width_level_log_contractions[1] <
+            0.5 * history.same_width_level_log_contractions[0];
+    const bool established_stall = cost_decision.progress_stalled &&
+        (active_left_width > 1 || cost_decision.prior_history_mature);
+    const bool scalar_widening_necessary = active_left_width == 1 &&
         positive_recent_progress &&
+        (cost_decision.recent_slowdown ||
+         (cost_decision.prior_history_mature &&
+          (cost_decision.persistent_slowdown ||
+           cost_decision.long_horizon_pressure)));
+    const bool block_widening_necessary = active_left_width > 1 &&
+        (positive_recent_progress || established_stall) &&
         (cost_decision.persistent_slowdown ||
-         cost_decision.long_horizon_pressure);
+         cost_decision.long_horizon_pressure ||
+         cost_decision.pass_reduction_admissible);
+    cost_decision.widening_necessary =
+        scalar_widening_necessary || block_widening_necessary;
     cost_decision.candidate = cost_decision.candidate &&
         cost_decision.widening_necessary;
     return cost_decision;
@@ -522,6 +555,8 @@ struct MatchedHorizonPlan {
     int end_basis_rank = -1;
     int origin_active_width = -1;
     int active_left_width = -1;
+    double starting_certificate =
+        std::numeric_limits<double>::infinity();
     double level_operator_seconds[2] = {
         std::numeric_limits<double>::infinity(),
         std::numeric_limits<double>::infinity()};
@@ -546,18 +581,45 @@ inline int remaining_matched_horizon(
     return plan.end_basis_rank - current_basis_rank;
 }
 
+inline bool extend_matched_horizon_to_basis_limit(
+    MatchedHorizonPlan& plan,
+    int current_basis_rank,
+    int basis_limit) noexcept {
+    if (plan.end_basis_rank < 0 || current_basis_rank < 0 ||
+        basis_limit <= current_basis_rank ||
+        current_basis_rank < plan.end_basis_rank) {
+        return false;
+    }
+    plan.end_basis_rank = basis_limit;
+    return true;
+}
+
+inline bool matched_horizon_progress_stalled(
+    const MatchedHorizonPlan& plan,
+    double current_certificate) noexcept {
+    return plan.starting_certificate > 0.0 &&
+        current_certificate > 0.0 &&
+        std::isfinite(plan.starting_certificate) &&
+        std::isfinite(current_certificate) &&
+        std::log(plan.starting_certificate) -
+                std::log(current_certificate) <
+            std::log(2.0);
+}
+
 inline bool start_matched_horizon_plan(
     MatchedHorizonPlan& plan,
     int current_basis_rank,
     int basis_limit,
     int matched_horizon,
     int origin_active_width,
-    int target_active_width) noexcept {
+    int target_active_width,
+    double starting_certificate) noexcept {
     if (current_basis_rank < 0 || basis_limit < current_basis_rank ||
         matched_horizon <= 0 ||
         matched_horizon > basis_limit - current_basis_rank ||
         origin_active_width <= 0 ||
-        target_active_width <= 0) {
+        target_active_width <= 0 || !(starting_certificate > 0.0) ||
+        !std::isfinite(starting_certificate)) {
         reset_matched_horizon_plan(plan);
         return false;
     }
@@ -565,6 +627,7 @@ inline bool start_matched_horizon_plan(
     plan.end_basis_rank = current_basis_rank + matched_horizon;
     plan.origin_active_width = origin_active_width;
     plan.active_left_width = target_active_width;
+    plan.starting_certificate = starting_certificate;
     return true;
 }
 
