@@ -917,16 +917,14 @@ preconditioning methods included in the memory comparison.
 ### Paper
 
 **Adaptive Matrix-Free Least Squares Solver**<br>
-Yang Tian<br>
-Research manuscript prepared for *ACM Transactions on Mathematical Software*.
+Yang Tian
 
 If AMFLS supports your research, please cite the paper.
 
 ```bibtex
-@unpublished{Tian2026AMFLS,
+@misc{Tian2026AMFLS,
   author = {Tian, Yang},
   title  = {Adaptive Matrix-Free Least Squares Solver},
-  note   = {Research manuscript prepared for ACM Transactions on Mathematical Software},
   year   = {2026}
 }
 ```
