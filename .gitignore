@@ -8,7 +8,11 @@ __pycache__/
 *.dll
 /docs/
 /paper/
-/experiments/
-/README.md
-/tests/python/test_experiment_protocol.py
-/tests/python/test_sparse_rank_audit.py
+/examples/
+/tests/
+/experiments/data/
+/experiments/tables/
+/experiments/results/*
+!/experiments/results/formal_100_v2/
+/experiments/results/formal_100_v2/*
+!/experiments/results/formal_100_v2/*.csv

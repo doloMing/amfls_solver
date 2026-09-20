@@ -1,0 +1,83 @@
+{
+  "suite": "large_dense_geometry_rank_v1",
+  "tolerance": 1e-10,
+  "failure_probability": 1e-6,
+  "instance_seeds": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200],
+  "algorithm_seed_offset": 1000003,
+  "order_seed": 7001,
+  "timing_repetitions": 1,
+  "methods": [
+    "amfls",
+    "fixed_rbgk",
+    "lsqr",
+    "lsmr",
+    "lsmb",
+    "lsrn"
+  ],
+  "maximum_iterations": 4096,
+  "maximum_depth": 2048,
+  "maximum_auxiliary_width": 64,
+  "maximum_epochs": 9,
+  "maximum_basis_size": 2048,
+  "fixed_rbgk_auxiliary_width": 8,
+  "lsrn_oversampling": 2.0,
+  "lsrn_sketch_block_size": 32,
+  "threads": 1,
+  "warmup_runs": 1,
+  "cases": [
+    {
+      "name": "clustered_coherent_consistent_square",
+      "m": 2048,
+      "n": 2048,
+      "rank": 2048,
+      "coherence": "coherent",
+      "spectrum": "clusters",
+      "rhs": "energy_balanced",
+      "regularization_ratio": 0.0
+    },
+    {
+      "name": "polynomial_balanced_consistent_wide",
+      "m": 512,
+      "n": 16384,
+      "rank": 512,
+      "coherence": "haar",
+      "spectrum": "polynomial",
+      "alpha": 0.75,
+      "rhs": "energy_balanced",
+      "regularization_ratio": 0.0
+    },
+    {
+      "name": "clustered_inconsistent_exact_rank_deficient_tall",
+      "m": 16384,
+      "n": 512,
+      "rank": 384,
+      "coherence": "coherent",
+      "spectrum": "clusters",
+      "rhs": "inconsistent",
+      "noise_ratio": 0.05,
+      "regularization_ratio": 0.0
+    },
+    {
+      "name": "severely_ill_conditioned_full_rank_coherent_consistent_square",
+      "m": 2048,
+      "n": 2048,
+      "rank": 2048,
+      "coherence": "coherent",
+      "spectrum": "exponential",
+      "endpoint": 1e-14,
+      "rhs": "energy_balanced",
+      "regularization_ratio": 0.0
+    },
+    {
+      "name": "smooth_inconsistent_exact_rank_deficient_wide",
+      "m": 512,
+      "n": 16384,
+      "rank": 384,
+      "coherence": "coherent",
+      "spectrum": "smooth",
+      "rhs": "inconsistent",
+      "noise_ratio": 0.05,
+      "regularization_ratio": 0.0
+    }
+  ]
+}

@@ -7,7 +7,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AMFLS_BUILD_TORCH "Build the PyTorch CPU binding" OFF)
-option(AMFLS_BUILD_EXAMPLES "Build C++ examples" ON)
 
 set(BLA_SIZEOF_INTEGER 4)
 find_package(BLAS QUIET)
@@ -117,15 +116,4 @@ if(AMFLS_BUILD_TORCH)
         amfls_core "${TORCH_CPU_LIBRARY}" "${TORCH_C10_LIBRARY}")
     set_target_properties(amfls_torch PROPERTIES
         PREFIX "" BUILD_RPATH "${TORCH_LIBRARY_DIR}")
-endif()
-
-if(AMFLS_BUILD_EXAMPLES)
-    add_subdirectory(examples/cpp)
-endif()
-
-include(CTest)
-if(BUILD_TESTING)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    add_subdirectory(tests/cpp)
-    add_subdirectory(tests/python)
 endif()
